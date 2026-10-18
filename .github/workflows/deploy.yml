@@ -12,25 +12,16 @@ on:
     # 北京时间每天 01:07；实际启动时间可能延迟。
     - cron: '7 17 * * *'
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'smoke：2 次短测；run：按 READ_NUM 正常运行'
-        type: choice
-        required: true
-        default: smoke
-        options:
-          - smoke
-          - run
 
 jobs:
   deploy:
     runs-on: ubuntu-22.04
     environment: AutoRead
-    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'smoke' && 10 || 90 }}
+    timeout-minutes: 10
     env:
       TZ: Asia/Shanghai
       PYTHONUNBUFFERED: '1'
-      READ_NUM: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'smoke' && '2' || vars.READ_NUM || '40' }}
+      READ_NUM: ${{ vars.READ_NUM || '4' }}
 
     steps:
       - name: Check configuration
