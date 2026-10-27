@@ -17,14 +17,13 @@ jobs:
   deploy:
     runs-on: ubuntu-22.04
     environment: AutoRead
-    timeout-minutes: 10
+    timeout-minutes: 60
     env:
       TZ: Asia/Shanghai
       PYTHONUNBUFFERED: '1'
-      READ_NUM: ${{ vars.READ_NUM || '4' }}
 
     steps:
-      - name: Check configuration
+      - name: Check configuration and select duration
         env:
           WXREAD_CURL_BASH: ${{ secrets.WXREAD_CURL_BASH }}
         shell: bash
@@ -33,11 +32,12 @@ jobs:
             echo "::error::请先配置 Repository Secret：WXREAD_CURL_BASH。"
             exit 1
           fi
-          if [[ ! "$READ_NUM" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::READ_NUM 必须为正整数。"
-            exit 1
-          fi
-          echo "配置预检通过；本次执行 ${READ_NUM} 次。"
+          # 每次任务随机选择一次整数分钟数；每轮阅读约 30 秒。
+          read_minutes="$(shuf -i 31-37 -n 1)"
+          read_count="$((read_minutes * 2))"
+          printf 'READ_NUM=%s\n' "$read_count" >> "$GITHUB_ENV"
+          echo "配置预检通过；本次随机选择 ${read_minutes} 分钟，共 ${read_count} 次。"
+          printf '### 本次阅读计划\n\n目标时长：%s 分钟；阅读次数：%s 次。\n' "$read_minutes" "$read_count" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Checkout repository
         uses: actions/checkout@v7
