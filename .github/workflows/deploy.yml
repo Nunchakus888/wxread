@@ -1,5 +1,5 @@
 name: wxread
-run-name: ${{ (inputs.catchup_10h || github.event_name == 'push') && 'One-time 10h catch-up' || 'Daily reading 1h' }}
+run-name: ${{ inputs.catchup_10h && 'One-time 10h catch-up' || 'Daily reading 1h' }}
 
 permissions:
   contents: read
@@ -12,9 +12,6 @@ on:
   schedule:
     # 北京时间每天 01:07；实际启动时间可能延迟。
     - cron: '7 17 * * *'
-  push:
-    branches: [main]
-    paths: ['.github/workflows/deploy.yml']
   workflow_dispatch:
     inputs:
       catchup_10h:
@@ -25,15 +22,12 @@ on:
 
 jobs:
   deploy:
-    # 仅本次指定提交自动启动补时，之后普通工作流修改不触发阅读。
-    if: >-
-      ${{ github.event_name != 'push' || startsWith(github.event.head_commit.message, 'ci: start 10h catchup 2026-11-26 and read 1h daily') }}
     name: Read hour ${{ matrix.hour }}
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
-        hour: ${{ fromJSON((inputs.catchup_10h || github.event_name == 'push') && '[1,2,3,4,5,6,7,8,9,10]' || '[1]') }}
+        hour: ${{ fromJSON(inputs.catchup_10h && '[1,2,3,4,5,6,7,8,9,10]' || '[1]') }}
     runs-on: ubuntu-22.04
     environment: AutoRead
     timeout-minutes: 90
@@ -41,7 +35,7 @@ jobs:
       TZ: Asia/Shanghai
       PYTHONUNBUFFERED: '1'
       READ_NUM: '120'
-      CATCHUP_10H: ${{ inputs.catchup_10h || github.event_name == 'push' }}
+      CATCHUP_10H: ${{ inputs.catchup_10h || false }}
       # 固定本次补时截止；重跑失败分段也不会延长窗口。
       CATCHUP_DEADLINE: '2026-11-27T15:29:31Z'
 
