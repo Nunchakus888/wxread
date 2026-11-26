@@ -1,4 +1,5 @@
 name: wxread
+run-name: ${{ (inputs.catchup_10h || github.event_name == 'push') && 'One-time 10h catch-up' || 'Daily reading 1h' }}
 
 permissions:
   contents: read
@@ -11,33 +12,61 @@ on:
   schedule:
     # 北京时间每天 01:07；实际启动时间可能延迟。
     - cron: '7 17 * * *'
+  push:
+    branches: [main]
+    paths: ['.github/workflows/deploy.yml']
   workflow_dispatch:
+    inputs:
+      catchup_10h:
+        description: '临时补时 10 小时（仅限北京时间 2026-11-27 23:29 前）；默认每天 1 小时'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   deploy:
+    # 仅本次指定提交自动启动补时，之后普通工作流修改不触发阅读。
+    if: >-
+      ${{ github.event_name != 'push' || startsWith(github.event.head_commit.message, 'ci: start 10h catchup 2026-11-26 and read 1h daily') }}
+    name: Read hour ${{ matrix.hour }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        hour: ${{ fromJSON((inputs.catchup_10h || github.event_name == 'push') && '[1,2,3,4,5,6,7,8,9,10]' || '[1]') }}
     runs-on: ubuntu-22.04
     environment: AutoRead
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       TZ: Asia/Shanghai
       PYTHONUNBUFFERED: '1'
+      READ_NUM: '120'
+      CATCHUP_10H: ${{ inputs.catchup_10h || github.event_name == 'push' }}
+      # 固定本次补时截止；重跑失败分段也不会延长窗口。
+      CATCHUP_DEADLINE: '2026-11-27T15:29:31Z'
 
     steps:
-      - name: Check configuration and select duration
+      - name: Check configuration and reading plan
         env:
           WXREAD_CURL_BASH: ${{ secrets.WXREAD_CURL_BASH }}
+          READING_HOUR: ${{ matrix.hour }}
         shell: bash
         run: |
           if [[ -z "$WXREAD_CURL_BASH" ]]; then
             echo "::error::请先配置 Repository Secret：WXREAD_CURL_BASH。"
             exit 1
           fi
-          # 每次任务随机选择一次整数分钟数；每轮阅读约 30 秒。
-          read_minutes="$(shuf -i 31-37 -n 1)"
-          read_count="$((read_minutes * 2))"
-          printf 'READ_NUM=%s\n' "$read_count" >> "$GITHUB_ENV"
-          echo "配置预检通过；本次随机选择 ${read_minutes} 分钟，共 ${read_count} 次。"
-          printf '### 本次阅读计划\n\n目标时长：%s 分钟；阅读次数：%s 次。\n' "$read_minutes" "$read_count" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$CATCHUP_10H" == "true" ]]; then
+            if (( $(date +%s) >= $(date -d "$CATCHUP_DEADLINE" +%s) )); then
+              echo "::error::本次补时窗口已结束，不再启动补时。"
+              exit 1
+            fi
+            echo "临时补时：第 ${READING_HOUR}/10 段；本段 60 分钟，共 ${READ_NUM} 次。"
+            printf '### 临时补时\n\n第 %s/10 段，本段目标 60 分钟；截止时间（UTC）：%s。\n' "$READING_HOUR" "$CATCHUP_DEADLINE" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "日常阅读：目标 60 分钟，共 ${READ_NUM} 次。"
+            printf '### 日常阅读\n\n目标时长：60 分钟；阅读次数：120 次。\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -61,7 +90,18 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SERVERCHAN_SPT: ${{ secrets.SERVERCHAN_SPT }}
-        run: python main.py
+        shell: bash
+        run: |
+          if [[ "$CATCHUP_10H" == "true" ]]; then
+            remaining_seconds="$(( $(date -d "$CATCHUP_DEADLINE" +%s) - $(date +%s) ))"
+            if (( remaining_seconds <= 0 )); then
+              echo "::error::本次补时窗口已结束。"
+              exit 1
+            fi
+            timeout --signal=TERM --kill-after=10s "${remaining_seconds}s" python main.py
+          else
+            python main.py
+          fi
 
   keepalive-job:
     name: Keepalive Workflow
